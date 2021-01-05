@@ -13,13 +13,11 @@
  */
 package io.streamnative.pulsar.handlers.kop;
 
-import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.pulsar.broker.service.Producer;
 import org.apache.pulsar.broker.service.ServerCnx;
 import org.apache.pulsar.broker.service.Topic;
-import org.apache.pulsar.common.api.proto.PulsarApi;
 
 /**
  * InternalServerCnx, this only used to construct internalProducer / internalConsumer.
@@ -29,13 +27,10 @@ import org.apache.pulsar.common.api.proto.PulsarApi;
  */
 @Slf4j
 public class InternalProducer extends Producer {
-    private ServerCnx serverCnx;
     public InternalProducer(Topic topic, ServerCnx cnx,
                             long producerId, String producerName) {
         super(topic, cnx, producerId, producerName, null,
-                false, null, null, 0, false,
-                PulsarApi.ProducerAccessMode.Shared, Optional.empty());
-        this.serverCnx = cnx;
+            false, null, null, 0, false);
     }
 
     // this will call back by bundle unload
@@ -54,18 +49,5 @@ public class InternalProducer extends Producer {
         return future;
     }
 
-    @Override
-    public ServerCnx getCnx() {
-        return serverCnx;
-    }
 
-    @Override
-    public boolean equals(Object obj) {
-        return super.equals(obj);
-    }
-
-    @Override
-    public int hashCode() {
-        return super.hashCode();
-    }
 }

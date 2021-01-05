@@ -113,6 +113,7 @@ public class OffsetAcker implements Closeable {
 
     private CompletableFuture<Consumer<byte[]>> createConsumer(String groupId, TopicPartition topicPartition) {
         KopTopic kopTopic = new KopTopic(topicPartition.topic());
+        // TODO: 创建消费者consumer
         return consumerBuilder.clone()
                 .topic(kopTopic.getPartitionName(topicPartition.partition()))
                 .subscriptionName(groupId)

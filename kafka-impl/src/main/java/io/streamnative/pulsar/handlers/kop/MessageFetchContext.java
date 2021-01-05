@@ -13,6 +13,7 @@
  */
 package io.streamnative.pulsar.handlers.kop;
 
+import static io.streamnative.pulsar.handlers.kop.utils.MessageRecordUtils.entriesToRecords;
 import static org.apache.kafka.common.protocol.CommonFields.THROTTLE_TIME_MS;
 
 import com.google.common.collect.Lists;
@@ -57,11 +58,14 @@ import org.apache.kafka.common.requests.FetchResponse.PartitionData;
 public final class MessageFetchContext {
 
     private KafkaRequestHandler requestHandler;
+    private KafkaHeaderAndRequest fetchRequest;
 
     // recycler and get for this object
-    public static MessageFetchContext get(KafkaRequestHandler requestHandler) {
+    public static MessageFetchContext get(KafkaRequestHandler requestHandler,
+                                          KafkaHeaderAndRequest fetchRequest) {
         MessageFetchContext context = RECYCLER.get();
         context.requestHandler = requestHandler;
+        context.fetchRequest = fetchRequest;
         return context;
     }
 
@@ -79,14 +83,13 @@ public final class MessageFetchContext {
 
     public void recycle() {
         requestHandler = null;
+        fetchRequest = null;
         recyclerHandle.recycle(this);
     }
 
 
     // handle request
-    public CompletableFuture<AbstractResponse> handleFetch(
-            CompletableFuture<AbstractResponse> fetchResponse,
-            KafkaHeaderAndRequest fetchRequest) {
+    public CompletableFuture<AbstractResponse> handleFetch(CompletableFuture<AbstractResponse> fetchResponse) {
         LinkedHashMap<TopicPartition, PartitionData<MemoryRecords>> responseData = new LinkedHashMap<>();
 
         // Map of partition and related tcm.
@@ -148,6 +151,10 @@ public final class MessageFetchContext {
                                 log.warn("KafkaTopicConsumerManager.remove({}) return null for topic {}. "
                                         + "Fetch for topic return error.",
                                     offset, pair.getKey());
+
+                                // 尝试清除persistentTopic的缓存，有可能unload之后，topic已经关闭了。
+                                requestHandler.getTopicManager().getConsumerTopicManagers().remove(KopTopic.toString(pair.getKey()));
+                                requestHandler.getTopicManager().getTopics().remove(KopTopic.toString(pair.getKey()));
 
                                 responseData.put(pair.getKey(),
                                     new FetchResponse.PartitionData(
@@ -321,7 +328,9 @@ public final class MessageFetchContext {
                             } else if (apiVersion <= 3) {
                                 magic = RecordBatch.MAGIC_VALUE_V1;
                             }
-                            final MemoryRecords records = requestHandler.getEntryFormatter().decode(entries, magic);
+                            MemoryRecords records;
+                            // by default kafka is produced message in batched mode.
+                            records = entriesToRecords(entries, magic);
 
                             partitionData = new FetchResponse.PartitionData(
                                 Errors.NONE,
@@ -377,6 +386,7 @@ public final class MessageFetchContext {
             CompletableFuture<List<Entry>> readFuture = new CompletableFuture<>();
             cursor = cursorOffsetPair.getValue().getLeft();
             long currentOffset = cursorOffsetPair.getValue().getRight();
+            // TODO: 这个地方其实不适合读取多个entries，跨度比较大，会造成后续的异常。
             int readeEntryNum = requestHandler.getMaxReadEntriesNum();
 
             // read readeEntryNum size entry.

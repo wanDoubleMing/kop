@@ -51,7 +51,8 @@ public class KafkaTopicManager {
     @Getter
     private final ConcurrentHashMap<String, CompletableFuture<KafkaTopicConsumerManager>> consumerTopicManagers;
 
-    // cache for topics: <topicName, persistentTopic>, for removing producer
+    // cache for topics: <topicName, persistentTopic>
+    @Getter
     private final ConcurrentHashMap<String, CompletableFuture<PersistentTopic>> topics;
     // cache for references in PersistentTopic: <topicName, producer>
     private final ConcurrentHashMap<String, Producer> references;
@@ -114,6 +115,7 @@ public class KafkaTopicManager {
             topicName,
             t -> {
                 CompletableFuture<PersistentTopic> topic = getTopic(t);
+                checkState(topic != null);
 
                 return topic.thenApply(t2 -> {
                     if (log.isDebugEnabled()) {
@@ -122,8 +124,6 @@ public class KafkaTopicManager {
                     }
 
                     if (t2 == null) {
-                        // remove cache when topic is null
-                        removeTopicManagerCache(topic.toString());
                         return null;
                     }
                     // return consumer manager
@@ -143,8 +143,14 @@ public class KafkaTopicManager {
         KOP_ADDRESS_CACHE.clear();
     }
 
+    // whether topic exists in cache.
+    public boolean topicExists(String topicName) {
+        return topics.containsKey(topicName);
+    }
+
     // exception throw for pulsar.getClient();
     private Producer registerInPersistentTopic(PersistentTopic persistentTopic) throws Exception {
+        // TODO: 此处是创建producer的地方
         Producer producer = new InternalProducer(persistentTopic, internalServerCnx,
             ((PulsarClientImpl) (pulsarService.getClient())).newRequestId(),
             brokerService.generateUniqueProducerName());
@@ -155,7 +161,7 @@ public class KafkaTopicManager {
         }
 
         // this will register and add USAGE_COUNT_UPDATER.
-        persistentTopic.addProducer(producer, new CompletableFuture<>());
+        persistentTopic.addProducer(producer);
         return producer;
     }
 
@@ -192,10 +198,6 @@ public class KafkaTopicManager {
             lookupBroker(topicName, backoff, returnFuture);
             return returnFuture;
         });
-    }
-
-    public InternalServerCnx getInternalServerCnx() {
-        return internalServerCnx;
     }
 
     // this method do the real lookup into Pulsar broker.
@@ -271,44 +273,66 @@ public class KafkaTopicManager {
             rwLock.readLock().unlock();
         }
 
-        brokerService.getTopic(topicName, brokerService.isAllowAutoTopicCreation(topicName))
-                .whenComplete((t2, throwable) -> {
-            if (throwable != null) {
-                log.error("[{}] Failed to getTopic {}. exception:",
-                        requestHandler.ctx.channel(), topicName, throwable);
-                // failed to getTopic from current broker, remove cache, which added in getTopicBroker.
-                removeTopicManagerCache(topicName);
-                topicCompletableFuture.complete(null);
-                return;
-            }
-            if (t2.isPresent()) {
-                PersistentTopic persistentTopic = (PersistentTopic) t2.get();
-                topicCompletableFuture.complete(persistentTopic);
-            } else {
-                log.error("[{}]Get empty topic for name {}",
-                        requestHandler.ctx.channel(), topicName);
-                topicCompletableFuture.complete(null);
-            }
+        return topics.computeIfAbsent(topicName, t -> {
+            getTopicBroker(t).whenCompleteAsync((ignore, th) -> {
+                if (th != null || ignore == null) {
+                    log.warn("[{}] Failed getTopicBroker {}, return null PersistentTopic. throwable: ",
+                            requestHandler.ctx.channel(), t, th);
+
+                    // get topic broker returns null. topic should be removed from LookupCache.
+                    if (ignore == null) {
+                        removeTopicManagerCache(topicName);
+                    }
+
+                    topicCompletableFuture.complete(null);
+                    return;
+                }
+
+                if (log.isDebugEnabled()) {
+                    log.debug("[{}] getTopicBroker for {} in KafkaTopicManager. brokerAddress: {}",
+                            requestHandler.ctx.channel(), t, ignore);
+                }
+
+                brokerService.getTopic(t, brokerService.isAllowAutoTopicCreation(t)).whenComplete((t2, throwable) -> {
+                    if (throwable != null) {
+                        log.error("[{}] Failed to getTopic {}. exception:",
+                                requestHandler.ctx.channel(), t, throwable);
+                        // failed to getTopic from current broker, remove cache, which added in getTopicBroker.
+                        removeTopicManagerCache(t);
+                        topicCompletableFuture.complete(null);
+                        return;
+                    }
+                    if (t2.isPresent()) {
+                        PersistentTopic persistentTopic = (PersistentTopic) t2.get();
+                        topicCompletableFuture.complete(persistentTopic);
+                    } else {
+                        log.error("[{}]Get empty topic for name {}",
+                                requestHandler.ctx.channel(), t);
+                        topicCompletableFuture.complete(null);
+                    }
+                });
+            });
+            return topicCompletableFuture;
         });
-        // cache for removing producer
-        topics.put(topicName, topicCompletableFuture);
-        return topicCompletableFuture;
     }
 
-    public void registerProducerInPersistentTopic (String topicName, PersistentTopic persistentTopic) {
+    public Producer registerProducerInPersistentTopic (String topicName, PersistentTopic persistentTopic) {
         try {
             if (references.containsKey(topicName)) {
-                return;
+                return references.get(topicName);
             }
             synchronized (this) {
                 if (references.containsKey(topicName)) {
-                    return;
+                    return references.get(topicName);
                 }
-                references.put(topicName, registerInPersistentTopic(persistentTopic));
+                Producer producer = registerInPersistentTopic(persistentTopic);
+                references.put(topicName, producer);
+                return producer;
             }
         } catch (Exception e){
             log.error("[{}] Failed to register producer in PersistentTopic {}. exception:",
                     requestHandler.ctx.channel(), topicName, e);
+            return null;
         }
     }
 
@@ -338,29 +362,23 @@ public class KafkaTopicManager {
 
             for (Map.Entry<String, CompletableFuture<PersistentTopic>> entry : topics.entrySet()) {
                 String topicName = entry.getKey();
+                removeTopicManagerCache(topicName);
                 CompletableFuture<PersistentTopic> topicFuture = entry.getValue();
                 if (log.isDebugEnabled()) {
                     log.debug("[{}] remove producer {} for topic {} at close()",
                         requestHandler.ctx.channel(), references.get(topicName), topicName);
                 }
                 if (references.get(topicName) != null) {
-                    PersistentTopic persistentTopic = topicFuture.get();
-                    if (persistentTopic != null) {
-                        persistentTopic.removeProducer(references.get(topicName));
-                    }
+                    topicFuture.get().removeProducer(references.get(topicName));
                     references.remove(topicName);
                 }
+                topics.remove(topicName);
             }
-            // clear topics after close
             topics.clear();
         } catch (Exception e) {
             log.error("[{}] Failed to close KafkaTopicManager. exception:",
                 requestHandler.ctx.channel(), e);
         }
-    }
-
-    public Producer getReferenceProducer(String topicName) {
-        return references.get(topicName);
     }
 
     public void deReference(String topicName) {
@@ -376,10 +394,7 @@ public class KafkaTopicManager {
             if (!topics.containsKey(topicName)) {
                 return;
             }
-            PersistentTopic persistentTopic = topics.get(topicName).get();
-            if (persistentTopic != null) {
-                persistentTopic.removeProducer(references.get(topicName));
-            }
+            topics.get(topicName).get().removeProducer(references.get(topicName));
             topics.remove(topicName);
         } catch (Exception e) {
             log.error("[{}] Failed to close reference for individual topic {}. exception:",

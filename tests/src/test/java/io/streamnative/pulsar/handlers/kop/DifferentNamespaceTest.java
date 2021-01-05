@@ -26,21 +26,16 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
-import java.util.Properties;
-import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
 import lombok.Cleanup;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.kafka.clients.admin.AdminClient;
-import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.PartitionInfo;
 import org.apache.pulsar.common.policies.data.TenantInfo;
-import org.testng.annotations.AfterClass;
 import org.testng.annotations.BeforeClass;
 import org.testng.annotations.DataProvider;
 import org.testng.annotations.Test;
@@ -49,16 +44,13 @@ import org.testng.annotations.Test;
  * test topics in different namespaces.
  */
 @Slf4j
-public abstract class DifferentNamespaceTestBase extends KopProtocolHandlerTestBase {
+public class DifferentNamespaceTest extends KopProtocolHandlerTestBase {
 
     private static final String DEFAULT_TENANT = "public";
     private static final String DEFAULT_NAMESPACE = "default";
     private static final String ANOTHER_TENANT = "my-tenant";
     private static final String ANOTHER_NAMESPACE = "my-ns";
 
-    public DifferentNamespaceTestBase(final String entryFormat) {
-        super(entryFormat);
-    }
 
     @DataProvider(name = "topics")
     public static Object[][] topics() {
@@ -81,8 +73,6 @@ public abstract class DifferentNamespaceTestBase extends KopProtocolHandlerTestB
         admin.namespaces().createNamespace(ANOTHER_TENANT + "/" + ANOTHER_NAMESPACE);
     }
 
-    @AfterClass
-    @Override
     protected void cleanup() throws Exception {
         super.internalCleanup();
     }
@@ -132,8 +122,7 @@ public abstract class DifferentNamespaceTestBase extends KopProtocolHandlerTestB
 
     @Test(timeOut = 20000)
     void testListTopics() throws Exception {
-        final String topic1ShortName = "list-topics-1";
-        final String topic1 = DEFAULT_TENANT + "/" + DEFAULT_NAMESPACE + "/" + topic1ShortName;
+        final String topic1 = "list-topics-1";
         final int numPartitions1 = 3;
         final String topic2 = ANOTHER_TENANT + "/" + ANOTHER_NAMESPACE + "/list-topics-2";
         final int numPartitions2 = 5;
@@ -146,20 +135,13 @@ public abstract class DifferentNamespaceTestBase extends KopProtocolHandlerTestB
         Map<String, List<PartitionInfo>> topicMap = kConsumer.getConsumer().listTopics(Duration.ofSeconds(5));
         log.info("topicMap: {}", topicMap);
 
-        assertTrue(topicMap.containsKey(topic1ShortName));
-        assertEquals(topicMap.get(topic1ShortName).size(), numPartitions1);
+        final String key1 = new KopTopic(topic1).getFullName();
+        assertTrue(topicMap.containsKey(key1));
+        assertEquals(topicMap.get(key1).size(), numPartitions1);
 
         final String key2 = new KopTopic(topic2).getFullName();
         assertTrue(topicMap.containsKey(key2));
         assertEquals(topicMap.get(key2).size(), numPartitions2);
-
-        Properties props = new Properties();
-        props.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, "localhost:" + getKafkaBrokerPort());
-        AdminClient kafkaAdmin = AdminClient.create(props);
-        Set<String> topicSet = kafkaAdmin.listTopics().names().get();
-        log.info("topicSet: {}", topicSet);
-        assertTrue(topicSet.contains(topic1ShortName));
-        assertTrue(topicSet.contains(key2));
     }
 
     @Test(timeOut = 30000)

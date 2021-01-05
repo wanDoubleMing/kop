@@ -74,14 +74,4 @@ public class KopTopicTest {
             assertTrue(e.getMessage().contains("Invalid partition"));
         }
     }
-
-    @Test
-    public void testRemoveDefaultNamespacePrefix() {
-        KopTopic.initialize("my-tenant/my-ns");
-
-        final String topic1 = "persistent://my-tenant/my-ns/my-topic";
-        final String topic2 = "persistent://my-tenant/another-ns/my-topic";
-        assertEquals(KopTopic.removeDefaultNamespacePrefix(topic1), "my-topic");
-        assertEquals(KopTopic.removeDefaultNamespacePrefix(topic2), topic2);
-    }
 }

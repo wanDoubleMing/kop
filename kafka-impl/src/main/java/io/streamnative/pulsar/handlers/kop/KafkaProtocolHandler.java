@@ -24,6 +24,7 @@ import io.streamnative.pulsar.handlers.kop.coordinator.group.GroupConfig;
 import io.streamnative.pulsar.handlers.kop.coordinator.group.GroupCoordinator;
 import io.streamnative.pulsar.handlers.kop.coordinator.group.OffsetConfig;
 import io.streamnative.pulsar.handlers.kop.utils.ConfigurationUtils;
+import io.streamnative.pulsar.handlers.kop.utils.JsonUtils;
 import io.streamnative.pulsar.handlers.kop.utils.KopTopic;
 import io.streamnative.pulsar.handlers.kop.utils.MetadataUtils;
 import io.streamnative.pulsar.handlers.kop.utils.timer.SystemTimer;
@@ -72,13 +73,13 @@ public class KafkaProtocolHandler implements ProtocolHandler {
     /**
      * Listener for the changing of topic that stores offsets of consumer group.
      */
-    public static class OffsetAndTopicListener implements NamespaceBundleOwnershipListener {
+    public static class OffsetTopicListener implements NamespaceBundleOwnershipListener {
 
         final BrokerService service;
         final NamespaceName kafkaMetaNs;
         final NamespaceName kafkaTopicNs;
         final GroupCoordinator groupCoordinator;
-        public OffsetAndTopicListener(BrokerService service,
+        public OffsetTopicListener(BrokerService service,
                                    KafkaServiceConfiguration kafkaConfig,
                                    GroupCoordinator groupCoordinator) {
             this.service = service;
@@ -96,7 +97,7 @@ public class KafkaProtocolHandler implements ProtocolHandler {
             service.pulsar().getNamespaceService().getOwnedTopicListForNamespaceBundle(bundle)
                 .whenComplete((topics, ex) -> {
                     if (ex == null) {
-                        log.info("get owned topic list when onLoad bundle {}, topic size {} ", bundle, topics.size());
+                        log.info("[OnLoad] get owned topic list when onLoad bundle {}, topic size {} ", bundle, topics.size());
                         for (String topic : topics) {
                             TopicName name = TopicName.get(topic);
                             // already filtered namespace, check the local name without partition
@@ -131,7 +132,7 @@ public class KafkaProtocolHandler implements ProtocolHandler {
                         }
                     } else {
                         log.error("Failed to get owned topic list for "
-                            + "OffsetAndTopicListener when triggering on-loading bundle {}.",
+                            + "OffsetTopicListener when triggering on-loading bundle {}.",
                             bundle, ex);
                     }
                 });
@@ -144,7 +145,7 @@ public class KafkaProtocolHandler implements ProtocolHandler {
             service.pulsar().getNamespaceService().getOwnedTopicListForNamespaceBundle(bundle)
                 .whenComplete((topics, ex) -> {
                     if (ex == null) {
-                        log.info("get owned topic list when unLoad bundle {}, topic size {} ", bundle, topics.size());
+                        log.info("[UnLoad] get owned topic list when unLoad bundle {}, topic size {} ", bundle, topics.size());
                         for (String topic : topics) {
                             TopicName name = TopicName.get(topic);
 
@@ -164,7 +165,7 @@ public class KafkaProtocolHandler implements ProtocolHandler {
                         }
                     } else {
                         log.error("Failed to get owned topic list for "
-                            + "OffsetAndTopicListener when triggering un-loading bundle {}.",
+                            + "OffsetTopicListener when triggering un-loading bundle {}.",
                             bundle, ex);
                     }
                 });
@@ -174,8 +175,7 @@ public class KafkaProtocolHandler implements ProtocolHandler {
         // and namespace is related to kafka metadata namespace
         @Override
         public boolean test(NamespaceBundle namespaceBundle) {
-            return namespaceBundle.getNamespaceObject().equals(kafkaMetaNs)
-                    || namespaceBundle.getNamespaceObject().equals(kafkaTopicNs);
+            return namespaceBundle.getNamespaceObject().equals(kafkaMetaNs) || namespaceBundle.getNamespaceObject().equals(kafkaTopicNs);
         }
 
     }
@@ -221,6 +221,8 @@ public class KafkaProtocolHandler implements ProtocolHandler {
             // So need to get latest value from conf itself
             kafkaConfig.setAdvertisedAddress(conf.getAdvertisedAddress());
             kafkaConfig.setBindAddress(conf.getBindAddress());
+
+            log.info("Kafka protocol init with config: {}", JsonUtils.toJsonString(kafkaConfig));
         }
         this.bindAddress = ServiceConfigurationUtils.getDefaultOrConfiguredAddress(kafkaConfig.getBindAddress());
         KopTopic.initialize(kafkaConfig.getKafkaTenant() + "/" + kafkaConfig.getKafkaNamespace());
@@ -230,9 +232,7 @@ public class KafkaProtocolHandler implements ProtocolHandler {
     @Override
     public String getProtocolDataToAdvertise() {
         String listeners = getListenersFromConfig(kafkaConfig);
-        if (log.isDebugEnabled()) {
-            log.debug("Get configured listeners {}", listeners);
-        }
+        log.info("Kafka get protocol listeners: {}", listeners);
         return listeners;
     }
 
@@ -256,7 +256,7 @@ public class KafkaProtocolHandler implements ProtocolHandler {
                 brokerService.pulsar()
                     .getNamespaceService()
                     .addNamespaceBundleOwnershipListener(
-                        new OffsetAndTopicListener(brokerService, kafkaConfig, groupCoordinator));
+                        new OffsetTopicListener(brokerService, kafkaConfig, groupCoordinator));
             } catch (Exception e) {
                 log.error("initGroupCoordinator failed with", e);
             }
@@ -275,6 +275,8 @@ public class KafkaProtocolHandler implements ProtocolHandler {
         try {
             String listeners = getListenersFromConfig(kafkaConfig);
             String[] parts = listeners.split(LISTENER_DEL);
+
+            log.info("Kafka protocol newChannelInitializers with listeners: {}", listeners);
 
             ImmutableMap.Builder<InetSocketAddress, ChannelInitializer<SocketChannel>> builder =
                 ImmutableMap.<InetSocketAddress, ChannelInitializer<SocketChannel>>builder();
@@ -311,10 +313,12 @@ public class KafkaProtocolHandler implements ProtocolHandler {
 
     @Override
     public void close() {
+        log.info("Kafka protocol start closing...");
         if (groupCoordinator != null) {
             groupCoordinator.shutdown();
         }
         KafkaTopicManager.LOOKUP_CACHE.clear();
+        log.info("Kafka protocol close completely..");
     }
 
     public void initGroupCoordinator(BrokerService service) throws Exception {

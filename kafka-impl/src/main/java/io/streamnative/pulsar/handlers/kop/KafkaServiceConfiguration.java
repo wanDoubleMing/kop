@@ -247,11 +247,6 @@ public class KafkaServiceConfiguration extends ServiceConfiguration {
             category = CATEGORY_KOP,
             doc = "Maximum number of entries that are read from cursor once per time"
     )
-    private int maxReadEntriesNum = 5;
+    private int maxReadEntriesNum = 1;
 
-    @FieldContext(
-            category = CATEGORY_KOP,
-            doc = "The format of an entry. Default: pulsar. Optional: [pulsar, kafka]"
-    )
-    private String entryFormat = "pulsar";
 }

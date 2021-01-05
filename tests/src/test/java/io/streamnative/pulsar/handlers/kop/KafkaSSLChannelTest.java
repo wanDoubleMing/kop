@@ -32,7 +32,6 @@ import org.apache.pulsar.common.policies.data.RetentionPolicies;
 import org.apache.pulsar.common.policies.data.TenantInfo;
 import org.testng.annotations.AfterMethod;
 import org.testng.annotations.BeforeMethod;
-import org.testng.annotations.Factory;
 import org.testng.annotations.Test;
 
 /**
@@ -58,18 +57,6 @@ public class KafkaSSLChannelTest extends KopProtocolHandlerTestBase {
             }
         };
         javax.net.ssl.HttpsURLConnection.setDefaultHostnameVerifier(localhostAcceptedHostnameVerifier);
-    }
-
-    public KafkaSSLChannelTest(final String entryFormat) {
-        super(entryFormat);
-    }
-
-    @Factory
-    public static Object[] instances() {
-        return new Object[] {
-                new KafkaSSLChannelTest("pulsar"),
-                new KafkaSSLChannelTest("kafka")
-        };
     }
 
     protected void sslSetUpForBroker() throws Exception {
