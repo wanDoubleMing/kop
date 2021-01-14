@@ -40,8 +40,6 @@ public class OffsetAcker implements Closeable {
     public OffsetAcker(PulsarClientImpl pulsarClient) {
         this.consumerBuilder = pulsarClient.newConsumer()
                 .receiverQueueSize(0)
-                // TODO: 将consumer设置成shared类型，防止出现offsetCommit时需要ack创建consumer失败（默认为Exclusive）
-                .subscriptionType(SubscriptionType.Shared)
                 .subscriptionInitialPosition(SubscriptionInitialPosition.Earliest);
     }
 
