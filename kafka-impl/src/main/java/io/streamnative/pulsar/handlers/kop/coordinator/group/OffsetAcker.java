@@ -26,10 +26,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.consumer.internals.ConsumerProtocol;
 import org.apache.kafka.clients.consumer.internals.PartitionAssignor.Assignment;
 import org.apache.kafka.common.TopicPartition;
-import org.apache.pulsar.client.api.Consumer;
-import org.apache.pulsar.client.api.ConsumerBuilder;
-import org.apache.pulsar.client.api.MessageId;
-import org.apache.pulsar.client.api.SubscriptionInitialPosition;
+import org.apache.pulsar.client.api.*;
 import org.apache.pulsar.client.impl.PulsarClientImpl;
 
 /**
@@ -43,6 +40,8 @@ public class OffsetAcker implements Closeable {
     public OffsetAcker(PulsarClientImpl pulsarClient) {
         this.consumerBuilder = pulsarClient.newConsumer()
                 .receiverQueueSize(0)
+                // TODO: 将consumer设置成shared类型，防止出现offsetCommit时需要ack创建consumer失败（默认为Exclusive）
+                .subscriptionType(SubscriptionType.Shared)
                 .subscriptionInitialPosition(SubscriptionInitialPosition.Earliest);
     }
 

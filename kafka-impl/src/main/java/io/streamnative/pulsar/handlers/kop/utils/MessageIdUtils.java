@@ -91,4 +91,10 @@ public class MessageIdUtils {
         }
         return offset;
     }
+
+    public static void main(String[] args) {
+        System.out.println(getPosition(77106551432675328L));
+        System.out.println(getPosition(77088959246630912L));
+        System.out.println(getPosition(77071367060586496L));
+    }
 }

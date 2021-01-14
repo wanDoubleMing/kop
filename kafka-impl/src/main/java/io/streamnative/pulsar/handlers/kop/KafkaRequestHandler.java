@@ -746,7 +746,6 @@ public class KafkaRequestHandler extends KafkaCommandDecoder {
                     ListOffsetResponse.UNKNOWN_OFFSET));
                 return;
             }
-
             ManagedLedgerImpl managedLedger = (ManagedLedgerImpl) perTopic.getManagedLedger();
             if (timestamp == ListOffsetRequest.LATEST_TIMESTAMP) {
                 PositionImpl position = (PositionImpl) managedLedger.getLastConfirmedEntry();
@@ -881,7 +880,6 @@ public class KafkaRequestHandler extends KafkaCommandDecoder {
 
             CompletableFuture<PersistentTopic> persistentTopic = topicManager.getTopic(KopTopic.toString(topic));
             partitionData = fetchOffsetForTimestamp(persistentTopic, times, false);
-
             responseData.put(topic, partitionData);
         });
 

@@ -85,7 +85,6 @@ public class GroupCoordinator {
         GroupConfig groupConfig,
         OffsetConfig offsetConfig,
         KafkaServiceConfiguration kafkaServiceConfiguration,
-
         Timer timer,
         Time time
     ) {
