@@ -39,6 +39,8 @@ public class OffsetAcker implements Closeable {
 
     public OffsetAcker(PulsarClientImpl pulsarClient) {
         this.consumerBuilder = pulsarClient.newConsumer()
+                // todo: 订阅模式从exclusive改为failover，怕创建consumer的时候出错。
+                .subscriptionType(SubscriptionType.Failover)
                 .receiverQueueSize(0)
                 .subscriptionInitialPosition(SubscriptionInitialPosition.Earliest);
     }
