@@ -13,7 +13,15 @@
  */
 package io.streamnative.pulsar.handlers.kop;
 
+import static com.google.common.base.Preconditions.checkArgument;
+import static io.streamnative.pulsar.handlers.kop.utils.MessageIdUtils.offsetAfterBatchIndex;
+
 import io.streamnative.pulsar.handlers.kop.utils.MessageIdUtils;
+import java.io.Closeable;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.bookkeeper.mledger.AsyncCallbacks.DeleteCursorCallback;
@@ -25,15 +33,6 @@ import org.apache.commons.codec.digest.DigestUtils;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.pulsar.broker.service.persistent.PersistentTopic;
 import org.apache.pulsar.common.util.collections.ConcurrentLongHashMap;
-
-import java.io.Closeable;
-import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
-
-import static com.google.common.base.Preconditions.checkArgument;
-import static io.streamnative.pulsar.handlers.kop.utils.MessageIdUtils.offsetAfterBatchIndex;
 
 /**
  * KafkaTopicConsumerManager manages a topic and its related offset cursor.

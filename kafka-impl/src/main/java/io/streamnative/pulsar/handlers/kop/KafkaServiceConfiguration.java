@@ -18,6 +18,7 @@ import io.streamnative.pulsar.handlers.kop.coordinator.group.OffsetConfig;
 import java.util.HashSet;
 import java.util.Set;
 import lombok.Getter;
+import lombok.NonNull;
 import lombok.Setter;
 import org.apache.kafka.common.record.CompressionType;
 import org.apache.pulsar.broker.ServiceConfiguration;
@@ -137,13 +138,42 @@ public class KafkaServiceConfiguration extends ServiceConfiguration {
     )
     private long offsetsRetentionCheckIntervalMs = OffsetConfig.DefaultOffsetsRetentionCheckIntervalMs;
 
+    @Deprecated
     @FieldContext(
         category = CATEGORY_KOP,
-        doc = "ListenersProp for Kafka service(host should follow the advertisedAddress). "
-              + "e.g. PLAINTEXT://localhost:9092,SSL://localhost:9093. "
-              + "If not set, kop will use PLAINTEXT://advertisedAddress:9092"
+        doc = "Use `kafkaListeners` instead"
     )
     private String listeners;
+
+    @FieldContext(
+        category = CATEGORY_KOP,
+        doc = "Comma-separated list of URIs we will listen on and the listener names.\n"
+                + "e.g. PLAINTEXT://localhost:9092,SSL://localhost:9093.\n"
+                + "If hostname is not set, bind to the default interface."
+    )
+    private String kafkaListeners;
+
+    public String getListeners() {
+        return (kafkaListeners != null) ? kafkaListeners : listeners;
+    }
+
+    @FieldContext(
+        category = CATEGORY_KOP,
+        doc = "Listeners to publish to ZooKeeper for clients to use.\n"
+                + "The format is the same as `kafkaListeners`.\n"
+    )
+    private String kafkaAdvertisedListeners;
+
+    public @NonNull String getKafkaAdvertisedListeners() {
+        if (kafkaAdvertisedListeners != null) {
+            return kafkaAdvertisedListeners;
+        } else {
+            if (getListeners() == null) {
+                throw new IllegalStateException("listeners or kafkaListeners is required");
+            }
+            return getListeners();
+        }
+    }
 
     // Kafka SSL configs
     @FieldContext(
@@ -247,6 +277,11 @@ public class KafkaServiceConfiguration extends ServiceConfiguration {
             category = CATEGORY_KOP,
             doc = "Maximum number of entries that are read from cursor once per time"
     )
-    private int maxReadEntriesNum = 1;
+    private int maxReadEntriesNum = 5;
 
+    @FieldContext(
+            category = CATEGORY_KOP,
+            doc = "The format of an entry. Default: pulsar. Optional: [pulsar, kafka]"
+    )
+    private String entryFormat = "pulsar";
 }

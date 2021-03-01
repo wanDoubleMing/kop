@@ -17,9 +17,9 @@ The following figure illustrates how is the Kafka-on-Pulsar protocol handler was
 
 ## Prerequisite
 
-Check the following requirements before using KoP.
+From 2.6.2.0 on, KoP `x.y.z.m` is based on Pulsar `x.y.z`, while `m` is the patch version number. See [here](integrations/README.md) for supported Kafka clients.
 
-Currently, KoP supports **[Kafka Client 1.x and 2.x](integrations/README.md)** and it is build based on **[Pulsar 2.6.1](http://pulsar.apache.org/en/download/)**.
+Before KoP 2.6.2.0, check the following requirements.
 
 | KoP version | Kafka client version | Pulsar version |
 | :---------- | :------------------- | :------------- |
@@ -139,6 +139,20 @@ KoP supports TLS encryption and integrates with Pulsar's authentication and auth
 
 For details, see [Secure KoP](docs/security.md).
 
+## Manage KoP
+
+### Envoy proxy for KoP
+
+You can use [Envoy](https://www.envoyproxy.io) as a proxy for KoP. For more information, see [here](docs/envoy-proxy.md).
+
 ## Implementation
 
 See [Implementation](docs/implementation.md) for the implementation details, including some difference of basic concepts between Kafka and Pulsar, and how the conversion is done.
+
+## Project Maintainers
+
+-   [@aloyszhang](https://github.com/aloyszhang)
+-   [@BewareMyPower](https://github.com/BewareMyPower)
+-   [@dockerzhang](https://github.com/dockerzhang)
+-   [@jiazhai](https://github.com/jiazhai)
+-   [@PierreZ](https://github.com/PierreZ)

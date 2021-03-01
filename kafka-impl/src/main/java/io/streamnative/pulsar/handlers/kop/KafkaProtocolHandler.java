@@ -24,7 +24,6 @@ import io.streamnative.pulsar.handlers.kop.coordinator.group.GroupConfig;
 import io.streamnative.pulsar.handlers.kop.coordinator.group.GroupCoordinator;
 import io.streamnative.pulsar.handlers.kop.coordinator.group.OffsetConfig;
 import io.streamnative.pulsar.handlers.kop.utils.ConfigurationUtils;
-import io.streamnative.pulsar.handlers.kop.utils.JsonUtils;
 import io.streamnative.pulsar.handlers.kop.utils.KopTopic;
 import io.streamnative.pulsar.handlers.kop.utils.MetadataUtils;
 import io.streamnative.pulsar.handlers.kop.utils.timer.SystemTimer;
@@ -40,9 +39,9 @@ import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.common.internals.Topic;
 import org.apache.kafka.common.record.CompressionType;
+import org.apache.kafka.common.security.auth.SecurityProtocol;
 import org.apache.kafka.common.utils.Time;
 import org.apache.pulsar.broker.PulsarServerException;
-import org.apache.pulsar.broker.PulsarService;
 import org.apache.pulsar.broker.ServiceConfiguration;
 import org.apache.pulsar.broker.ServiceConfigurationUtils;
 import org.apache.pulsar.broker.namespace.NamespaceBundleOwnershipListener;
@@ -63,23 +62,18 @@ import org.apache.pulsar.common.util.FutureUtil;
 public class KafkaProtocolHandler implements ProtocolHandler {
 
     public static final String PROTOCOL_NAME = "kafka";
-    public static final String SSL_PREFIX = "SSL://";
-    public static final String PLAINTEXT_PREFIX = "PLAINTEXT://";
-    public static final String LISTENER_DEL = ",";
     public static final String TLS_HANDLER = "tls";
-    public static final String LISTENER_PATTERN = "^(PLAINTEXT?|SSL)://[-a-zA-Z0-9+&@#/%?=~_|!:,.;]*:([0-9]+)";
-    public static final int DEFAULT_PORT = 9092;
 
     /**
      * Listener for the changing of topic that stores offsets of consumer group.
      */
-    public static class OffsetTopicListener implements NamespaceBundleOwnershipListener {
+    public static class OffsetAndTopicListener implements NamespaceBundleOwnershipListener {
 
         final BrokerService service;
         final NamespaceName kafkaMetaNs;
         final NamespaceName kafkaTopicNs;
         final GroupCoordinator groupCoordinator;
-        public OffsetTopicListener(BrokerService service,
+        public OffsetAndTopicListener(BrokerService service,
                                    KafkaServiceConfiguration kafkaConfig,
                                    GroupCoordinator groupCoordinator) {
             this.service = service;
@@ -97,7 +91,7 @@ public class KafkaProtocolHandler implements ProtocolHandler {
             service.pulsar().getNamespaceService().getOwnedTopicListForNamespaceBundle(bundle)
                 .whenComplete((topics, ex) -> {
                     if (ex == null) {
-                        log.info("[OnLoad] get owned topic list when onLoad bundle {}, topic size {} ", bundle, topics.size());
+                        log.info("get owned topic list when onLoad bundle {}, topic size {} ", bundle, topics.size());
                         for (String topic : topics) {
                             TopicName name = TopicName.get(topic);
                             // already filtered namespace, check the local name without partition
@@ -132,7 +126,7 @@ public class KafkaProtocolHandler implements ProtocolHandler {
                         }
                     } else {
                         log.error("Failed to get owned topic list for "
-                            + "OffsetTopicListener when triggering on-loading bundle {}.",
+                            + "OffsetAndTopicListener when triggering on-loading bundle {}.",
                             bundle, ex);
                     }
                 });
@@ -145,7 +139,7 @@ public class KafkaProtocolHandler implements ProtocolHandler {
             service.pulsar().getNamespaceService().getOwnedTopicListForNamespaceBundle(bundle)
                 .whenComplete((topics, ex) -> {
                     if (ex == null) {
-                        log.info("[UnLoad] get owned topic list when unLoad bundle {}, topic size {} ", bundle, topics.size());
+                        log.info("get owned topic list when unLoad bundle {}, topic size {} ", bundle, topics.size());
                         for (String topic : topics) {
                             TopicName name = TopicName.get(topic);
 
@@ -165,7 +159,7 @@ public class KafkaProtocolHandler implements ProtocolHandler {
                         }
                     } else {
                         log.error("Failed to get owned topic list for "
-                            + "OffsetTopicListener when triggering un-loading bundle {}.",
+                            + "OffsetAndTopicListener when triggering un-loading bundle {}.",
                             bundle, ex);
                     }
                 });
@@ -175,7 +169,8 @@ public class KafkaProtocolHandler implements ProtocolHandler {
         // and namespace is related to kafka metadata namespace
         @Override
         public boolean test(NamespaceBundle namespaceBundle) {
-            return namespaceBundle.getNamespaceObject().equals(kafkaMetaNs) || namespaceBundle.getNamespaceObject().equals(kafkaTopicNs);
+            return namespaceBundle.getNamespaceObject().equals(kafkaMetaNs)
+                    || namespaceBundle.getNamespaceObject().equals(kafkaTopicNs);
         }
 
     }
@@ -221,8 +216,6 @@ public class KafkaProtocolHandler implements ProtocolHandler {
             // So need to get latest value from conf itself
             kafkaConfig.setAdvertisedAddress(conf.getAdvertisedAddress());
             kafkaConfig.setBindAddress(conf.getBindAddress());
-
-            log.info("Kafka protocol init with config: {}", JsonUtils.toJsonString(kafkaConfig));
         }
         this.bindAddress = ServiceConfigurationUtils.getDefaultOrConfiguredAddress(kafkaConfig.getBindAddress());
         KopTopic.initialize(kafkaConfig.getKafkaTenant() + "/" + kafkaConfig.getKafkaNamespace());
@@ -231,9 +224,7 @@ public class KafkaProtocolHandler implements ProtocolHandler {
     // This method is called after initialize
     @Override
     public String getProtocolDataToAdvertise() {
-        String listeners = getListenersFromConfig(kafkaConfig);
-        log.info("Kafka get protocol listeners: {}", listeners);
-        return listeners;
+        return kafkaConfig.getKafkaAdvertisedListeners();
     }
 
     @Override
@@ -256,7 +247,7 @@ public class KafkaProtocolHandler implements ProtocolHandler {
                 brokerService.pulsar()
                     .getNamespaceService()
                     .addNamespaceBundleOwnershipListener(
-                        new OffsetTopicListener(brokerService, kafkaConfig, groupCoordinator));
+                        new OffsetAndTopicListener(brokerService, kafkaConfig, groupCoordinator));
             } catch (Exception e) {
                 log.error("initGroupCoordinator failed with", e);
             }
@@ -273,36 +264,30 @@ public class KafkaProtocolHandler implements ProtocolHandler {
         }
 
         try {
-            String listeners = getListenersFromConfig(kafkaConfig);
-            String[] parts = listeners.split(LISTENER_DEL);
-
-            log.info("Kafka protocol newChannelInitializers with listeners: {}", listeners);
-
             ImmutableMap.Builder<InetSocketAddress, ChannelInitializer<SocketChannel>> builder =
                 ImmutableMap.<InetSocketAddress, ChannelInitializer<SocketChannel>>builder();
 
-            for (String listener: parts) {
-                if (listener.startsWith(PLAINTEXT_PREFIX)) {
-                    builder.put(
-                        // TODO: consider using the address in the listener as the bind address.
-                        //          https://github.com/streamnative/kop/issues/46
-                        new InetSocketAddress(brokerService.pulsar().getBindAddress(), getListenerPort(listener)),
-                        new KafkaChannelInitializer(brokerService.pulsar(),
-                            kafkaConfig,
-                            groupCoordinator,
-                            false));
-                } else if (listener.startsWith(SSL_PREFIX)) {
-                    builder.put(
-                        new InetSocketAddress(brokerService.pulsar().getBindAddress(), getListenerPort(listener)),
-                        new KafkaChannelInitializer(brokerService.pulsar(),
-                            kafkaConfig,
-                            groupCoordinator,
-                            true));
-                } else {
-                    log.error("Kafka listener {} not supported. supports {} and {}",
-                        listener, PLAINTEXT_PREFIX, SSL_PREFIX);
+            final Map<SecurityProtocol, EndPoint> advertisedEndpointMap =
+                    EndPoint.parseListeners(kafkaConfig.getKafkaAdvertisedListeners());
+            EndPoint.parseListeners(kafkaConfig.getListeners()).forEach((protocol, endPoint) -> {
+                EndPoint advertisedEndPoint = advertisedEndpointMap.get(protocol);
+                if (advertisedEndPoint == null) {
+                    // Use the bind endpoint as the advertised endpoint.
+                    advertisedEndPoint = endPoint;
                 }
-            }
+                switch (protocol) {
+                    case PLAINTEXT:
+                    case SASL_PLAINTEXT:
+                        builder.put(endPoint.getInetAddress(), new KafkaChannelInitializer(brokerService.getPulsar(),
+                                kafkaConfig, groupCoordinator, false, advertisedEndPoint));
+                        break;
+                    case SSL:
+                    case SASL_SSL:
+                        builder.put(endPoint.getInetAddress(), new KafkaChannelInitializer(brokerService.getPulsar(),
+                                kafkaConfig, groupCoordinator, true, advertisedEndPoint));
+                        break;
+                }
+            });
 
             return builder.build();
         } catch (Exception e){
@@ -313,12 +298,10 @@ public class KafkaProtocolHandler implements ProtocolHandler {
 
     @Override
     public void close() {
-        log.info("Kafka protocol start closing...");
         if (groupCoordinator != null) {
             groupCoordinator.shutdown();
         }
         KafkaTopicManager.LOOKUP_CACHE.clear();
-        log.info("Kafka protocol close completely..");
     }
 
     public void initGroupCoordinator(BrokerService service) throws Exception {
@@ -396,109 +379,5 @@ public class KafkaProtocolHandler implements ProtocolHandler {
         } else {
             log.info("Current broker: {} does not own any of the offset topic partitions", currentBroker);
         }
-    }
-
-    public static int getListenerPort(String listener) {
-        checkState(listener.matches(LISTENER_PATTERN), "listener not match patten");
-
-        int lastIndex = listener.lastIndexOf(':');
-        return Integer.parseInt(listener.substring(lastIndex + 1));
-    }
-
-    public static int getListenerPort(String listeners, ListenerType type) {
-        String[] parts = listeners.split(LISTENER_DEL);
-
-        for (String listener: parts) {
-            if (type == ListenerType.PLAINTEXT && listener.startsWith(PLAINTEXT_PREFIX)) {
-                return getListenerPort(listener);
-            }
-            if (type == ListenerType.SSL && listener.startsWith(SSL_PREFIX)) {
-                return getListenerPort(listener);
-            }
-        }
-
-        log.info("KafkaProtocolHandler listeners {} not contains type {}", listeners, type);
-        return -1;
-    }
-
-    public static String getKopBrokerUrl(String listeners, Boolean tlsEnabled) {
-        String[] parts = listeners.split(LISTENER_DEL);
-
-        for (String listener: parts) {
-            if (tlsEnabled && listener.startsWith(SSL_PREFIX)) {
-                return listener;
-            }
-            if (!tlsEnabled && listener.startsWith(PLAINTEXT_PREFIX)) {
-                return listener;
-            }
-        }
-
-        log.info("listener {} not contains a valid SSL or PLAINTEXT address", listeners);
-        return null;
-    }
-
-    // getLocalListeners from config, if not exists in config, set it as PLAINTEXT://advertisedAddress:9092
-    public static String getListenersFromConfig(KafkaServiceConfiguration kafkaConfig) {
-        String listeners = kafkaConfig.getListeners();
-        String advertisedAddress = PulsarService.advertisedAddress(kafkaConfig);
-        if (listeners == null || listeners.isEmpty()) {
-            listeners = PLAINTEXT_PREFIX + advertisedAddress + ':' + DEFAULT_PORT;
-            return listeners;
-        }
-
-        return checkAndFillUpListeners(listeners, advertisedAddress);
-    }
-
-    // listener either in format: type://:port, e.g.: "SSL://:9093",
-    // or in format: type://hostname:port, e.g.: "SSL://hostname:9093",
-    // For the 1st format, need to fill it with `advertisedAddress` for hostname.
-    // For the 2nd format, need to check the hostname is the same as `advertisedAddress`.
-    public static String checkAndFillUpListeners(String listeners, String advertisedAddress) {
-        String[] parts = listeners.split(LISTENER_DEL);
-        checkState(parts.length >= 1, "Empty listener returned, should have at least 1 listener");
-
-        String retListeners = "";
-
-        for (String listener: parts) {
-            checkState(listener.matches(LISTENER_PATTERN),
-                    "Listener in wrong format: " + listener);
-
-            String retListener;
-            boolean noHostname = false;
-            int typeIndex = listener.indexOf("//") + 2;
-            int portIndex = listener.lastIndexOf(":");
-
-            String type = listener.substring(0, typeIndex);
-            String hostName = listener.substring(typeIndex,  portIndex);
-            String port = listener.substring(portIndex + 1);
-
-            checkState(type.equals(SSL_PREFIX) || type.equals(PLAINTEXT_PREFIX),
-                    "Not expected Listener type: " + type);
-
-            if (hostName.isEmpty()) {
-                hostName = advertisedAddress;
-                noHostname = true;
-            } else {
-                checkState(hostName.equals(advertisedAddress),
-                        "HostName: " + hostName + " not equals advertisedAddress: " + advertisedAddress);
-            }
-
-            int portInt = Integer.parseInt(port);
-            checkState(portInt >= 1 && portInt <= 65536, "Not a valid port: " + portInt);
-
-            if (noHostname) {
-                retListener = type + hostName + ":" + port;
-            } else {
-                retListener = listener;
-            }
-
-            if (retListeners.isEmpty()) {
-                retListeners = retListener;
-            } else {
-                retListeners += "," + retListener;
-            }
-        }
-
-        return retListeners;
     }
 }

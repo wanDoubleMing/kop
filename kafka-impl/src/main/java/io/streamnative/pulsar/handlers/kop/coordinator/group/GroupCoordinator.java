@@ -85,6 +85,7 @@ public class GroupCoordinator {
         GroupConfig groupConfig,
         OffsetConfig offsetConfig,
         KafkaServiceConfiguration kafkaServiceConfiguration,
+
         Timer timer,
         Time time
     ) {
@@ -455,14 +456,11 @@ public class GroupCoordinator {
                 new KeyValue<>(errors, assignment))
         );
 
-        // TODO: 这个地方貌似没必要去创建consumer，因为会造成commit_offset提交的时候，也会去创建consumer，如果不是同一台机器，会出现问题。
-        /*
         resultFuture.whenCompleteAsync((kv, throwable) -> {
             if (throwable == null && kv.getKey() == Errors.NONE) {
                 offsetAcker.addOffsetsTracker(groupId, kv.getValue());
             }
         });
-         */
         return resultFuture;
     }
 
@@ -1190,7 +1188,7 @@ public class GroupCoordinator {
                 maybePrepareRebalance(group);
                 break;
             case PreparingRebalance:
-                // joinPurgatory.checkAndComplete(GroupKey(group.groupId))
+                joinPurgatory.checkAndComplete(new GroupKey(group.groupId()));
                 break;
             default:
                 break;

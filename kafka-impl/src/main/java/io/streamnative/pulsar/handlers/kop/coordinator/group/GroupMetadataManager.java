@@ -160,9 +160,8 @@ public class GroupMetadataManager {
         }
 
     }
-    // TODO: 兼容低版本，需要修改为v1
-    //private final byte magicValue = RecordBatch.MAGIC_VALUE_V2;
-    private final byte magicValue = RecordBatch.MAGIC_VALUE_V1;
+
+    private final byte magicValue = RecordBatch.CURRENT_MAGIC_VALUE;
     private final CompressionType compressionType;
     private final OffsetConfig offsetConfig;
     private final ConcurrentMap<String, GroupMetadata> groupMetadataCache;

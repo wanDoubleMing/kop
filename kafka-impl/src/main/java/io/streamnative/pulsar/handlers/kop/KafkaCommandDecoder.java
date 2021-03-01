@@ -2,9 +2,9 @@
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * <p>
- * http://www.apache.org/licenses/LICENSE-2.0
- * <p>
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -16,6 +16,7 @@ package io.streamnative.pulsar.handlers.kop;
 import static com.google.common.base.Preconditions.checkArgument;
 import static org.apache.kafka.common.protocol.ApiKeys.API_VERSIONS;
 
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.Queues;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.Channel;
@@ -27,6 +28,8 @@ import java.nio.ByteBuffer;
 import java.util.Queue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
+import javax.naming.AuthenticationException;
+
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.common.errors.LeaderNotAvailableException;
@@ -81,6 +84,15 @@ public abstract class KafkaCommandDecoder extends ChannelInboundHandlerAdapter {
         if (log.isDebugEnabled()) {
             log.debug("Channel writability has changed to: {}", ctx.channel().isWritable());
         }
+        if (ctx.channel().isWritable()) {
+            // set auto read to true if channel is writable.
+            ctx.channel().config().setAutoRead(true);
+        } else {
+            log.debug("channel is not writable, disable auto reading for back pressing");
+            ctx.channel().config().setAutoRead(false);
+            ctx.flush();
+        }
+        ctx.fireChannelWritabilityChanged();
     }
 
     // turn input ByteBuf msg, which send from client side, into KafkaHeaderAndRequest
@@ -107,20 +119,20 @@ public abstract class KafkaCommandDecoder extends ChannelInboundHandlerAdapter {
 
     protected ByteBuf responseToByteBuf(AbstractResponse response, KafkaHeaderAndRequest request) {
         try (KafkaHeaderAndResponse kafkaHeaderAndResponse =
-                     KafkaHeaderAndResponse.responseForRequest(request, response)) {
+                 KafkaHeaderAndResponse.responseForRequest(request, response)) {
             // Lowering Client API_VERSION request to the oldest API_VERSION KoP supports, this is to make \
             // Kafka-Clients 2.4.x and above compatible and prevent KoP from panicking \
             // when it comes across a higher API_VERSION.
             short apiVersion = kafkaHeaderAndResponse.getApiVersion();
-            if (request.getHeader().apiKey() == API_VERSIONS) {
+            if (request.getHeader().apiKey() == API_VERSIONS){
                 if (!ApiKeys.API_VERSIONS.isVersionSupported(apiVersion)) {
                     apiVersion = ApiKeys.API_VERSIONS.oldestVersion();
                 }
             }
             return ResponseUtils.serializeResponse(
-                    apiVersion,
-                    kafkaHeaderAndResponse.getHeader(),
-                    kafkaHeaderAndResponse.getResponse()
+                apiVersion,
+                kafkaHeaderAndResponse.getHeader(),
+                kafkaHeaderAndResponse.getResponse()
             );
         } finally {
             // the request is not needed any more.
@@ -143,17 +155,26 @@ public abstract class KafkaCommandDecoder extends ChannelInboundHandlerAdapter {
         try {
             if (log.isDebugEnabled()) {
                 log.debug("[{}] Received kafka cmd {}, the request content is: {}",
-                        ctx.channel() != null ? ctx.channel().remoteAddress() : "Null channel",
-                        kafkaHeaderAndRequest.getHeader(), kafkaHeaderAndRequest);
+                    ctx.channel() != null ? ctx.channel().remoteAddress() : "Null channel",
+                    kafkaHeaderAndRequest.getHeader(), kafkaHeaderAndRequest);
             }
 
             CompletableFuture<AbstractResponse> responseFuture = new CompletableFuture<>();
+            responseFuture.whenComplete((response, e) -> {
+                ctx.channel().eventLoop().execute(() -> {
+                    writeAndFlushResponseToClient(channel);
+                });
+            });
 
             requestsQueue.add(ResponseAndRequest.of(responseFuture, kafkaHeaderAndRequest));
 
             if (!isActive.get()) {
                 handleInactive(kafkaHeaderAndRequest, responseFuture);
             } else {
+                if (!hasAuthenticated(kafkaHeaderAndRequest)) {
+                    authenticate(kafkaHeaderAndRequest, responseFuture);
+                    return;
+                }
                 switch (kafkaHeaderAndRequest.getHeader().apiKey()) {
                     case API_VERSIONS:
                         handleApiVersionsRequest(kafkaHeaderAndRequest, responseFuture);
@@ -208,16 +229,19 @@ public abstract class KafkaCommandDecoder extends ChannelInboundHandlerAdapter {
                     case SASL_AUTHENTICATE:
                         handleSaslAuthenticate(kafkaHeaderAndRequest, responseFuture);
                         break;
+                    case CREATE_TOPICS:
+                        handleCreateTopics(kafkaHeaderAndRequest, responseFuture);
+                        break;
+                    case DESCRIBE_CONFIGS:
+                        handleDescribeConfigs(kafkaHeaderAndRequest, responseFuture);
+                        break;
                     default:
                         handleError(kafkaHeaderAndRequest, responseFuture);
                 }
             }
-
-            responseFuture.whenComplete((response, e) -> {
-                ctx.channel().eventLoop().execute(() -> {
-                    writeAndFlushResponseToClient(channel);
-                });
-            });
+        } catch (AuthenticationException e) {
+            log.error("unexpected error in authenticate:", e);
+            close();
         } catch (Exception e) {
             log.error("error while handle command:", e);
             close();
@@ -232,17 +256,17 @@ public abstract class KafkaCommandDecoder extends ChannelInboundHandlerAdapter {
     protected void writeAndFlushResponseToClient(Channel channel) {
         // loop from first responseFuture.
         while (requestsQueue != null && requestsQueue.peek() != null
-                && requestsQueue.peek().getResponseFuture().isDone() && isActive.get()) {
+            && requestsQueue.peek().getResponseFuture().isDone() && isActive.get()) {
             ResponseAndRequest response = requestsQueue.remove();
             try {
                 if (log.isDebugEnabled()) {
                     log.debug("Write kafka cmd response back to client. \n"
-                                    + "\trequest content: {} \n"
-                                    + "\tresponse content: {}",
-                            response.getRequest().toString(),
-                            response.getResponseFuture().join().toString(response.getRequest().getRequest().version()));
+                            + "\trequest content: {} \n"
+                            + "\tresponse content: {}",
+                        response.getRequest().toString(),
+                        response.getResponseFuture().join().toString(response.getRequest().getRequest().version()));
                     log.debug("Write kafka cmd responseFuture back to client. request: {}",
-                            response.getRequest().getHeader());
+                        response.getRequest().getHeader());
                 }
 
                 ByteBuf result = responseToByteBuf(response.getResponseFuture().get(), response.getRequest());
@@ -263,11 +287,11 @@ public abstract class KafkaCommandDecoder extends ChannelInboundHandlerAdapter {
 
                 if (log.isDebugEnabled()) {
                     log.debug("Channel Closing! Write kafka cmd responseFuture back to client. request: {}",
-                            pair.getRequest().getHeader());
+                        pair.getRequest().getHeader());
                 }
                 AbstractRequest request = pair.getRequest().getRequest();
                 AbstractResponse apiResponse = request
-                        .getErrorResponse(new LeaderNotAvailableException("Channel is closing!"));
+                    .getErrorResponse(new LeaderNotAvailableException("Channel is closing!"));
                 pair.getResponseFuture().complete(apiResponse);
 
                 ByteBuf result = responseToByteBuf(pair.getResponseFuture().get(), pair.getRequest());
@@ -278,6 +302,12 @@ public abstract class KafkaCommandDecoder extends ChannelInboundHandlerAdapter {
             }
         }
     }
+
+    protected abstract boolean hasAuthenticated(KafkaHeaderAndRequest kafkaHeaderAndRequest);
+
+    protected abstract void
+    authenticate(KafkaHeaderAndRequest kafkaHeaderAndRequest, CompletableFuture<AbstractResponse> response)
+            throws AuthenticationException;
 
     protected abstract void
     handleError(KafkaHeaderAndRequest kafkaHeaderAndRequest, CompletableFuture<AbstractResponse> response);
@@ -336,6 +366,12 @@ public abstract class KafkaCommandDecoder extends ChannelInboundHandlerAdapter {
     protected abstract void
     handleSaslHandshake(KafkaHeaderAndRequest kafkaHeaderAndRequest, CompletableFuture<AbstractResponse> response);
 
+    protected abstract void
+    handleCreateTopics(KafkaHeaderAndRequest kafkaHeaderAndRequest, CompletableFuture<AbstractResponse> response);
+
+    protected abstract void
+    handleDescribeConfigs(KafkaHeaderAndRequest kafkaHeaderAndRequest, CompletableFuture<AbstractResponse> response);
+
     static class KafkaHeaderAndRequest implements Closeable {
 
         private static final String DEFAULT_CLIENT_HOST = "";
@@ -381,7 +417,7 @@ public abstract class KafkaCommandDecoder extends ChannelInboundHandlerAdapter {
 
         public String toString() {
             return String.format("KafkaHeaderAndRequest(header=%s, request=%s, remoteAddress=%s)",
-                    this.header, this.request, this.remoteAddress);
+                this.header, this.request, this.remoteAddress);
         }
 
         @Override
@@ -421,14 +457,14 @@ public abstract class KafkaCommandDecoder extends ChannelInboundHandlerAdapter {
 
         static KafkaHeaderAndResponse responseForRequest(KafkaHeaderAndRequest request, AbstractResponse response) {
             return new KafkaHeaderAndResponse(
-                    request.getHeader().apiVersion(),
-                    request.getHeader().toResponseHeader(),
-                    response);
+                request.getHeader().apiVersion(),
+                request.getHeader().toResponseHeader(),
+                response);
         }
 
         public String toString() {
             return String.format("KafkaHeaderAndResponse(header=%s,responseFuture=%s)",
-                    this.header.toStruct().toString(), this.response.toString(this.getApiVersion()));
+                this.header.toStruct().toString(), this.response.toString(this.getApiVersion()));
         }
 
         @Override
@@ -454,5 +490,10 @@ public abstract class KafkaCommandDecoder extends ChannelInboundHandlerAdapter {
             this.responseFuture = response;
             this.request = request;
         }
+    }
+
+    @VisibleForTesting
+    public ChannelHandlerContext getCtx() {
+        return ctx;
     }
 }
