@@ -177,12 +177,7 @@ public class PulsarEntryFormatter implements EntryFormatter {
                                     singleMessageMetadataBuilder, i, numMessages);
 
                             SingleMessageMetadata singleMessageMetadata = singleMessageMetadataBuilder.build();
-                            //Header[] headers = getHeadersFromMetadata(singleMessageMetadata.getPropertiesList());
-                            // todo: 因为低版本的kafka数据格式为v1，不支持Header头处理
-                            Header[] headers = null;
-                            if (magic > RecordBatch.MAGIC_VALUE_V1) {
-                                headers = getHeadersFromMetadata(singleMessageMetadata.getPropertiesList());
-                            }
+                            Header[] headers = getHeadersFromMetadata(singleMessageMetadata.getPropertiesList());
 
                             final ByteBuffer value = (singleMessageMetadata.getNullValue())
                                     ? null
@@ -202,12 +197,7 @@ public class PulsarEntryFormatter implements EntryFormatter {
                         }
                     });
                 } else {
-                    //Header[] headers = getHeadersFromMetadata(msgMetadata.getPropertiesList());
-                    // todo: 因为低版本的kafka数据格式为v1，不支持Header头处理
-                    Header[] headers = null;
-                    if (magic > RecordBatch.MAGIC_VALUE_V1) {
-                        headers = getHeadersFromMetadata(msgMetadata.getPropertiesList());
-                    }
+                    Header[] headers = getHeadersFromMetadata(msgMetadata.getPropertiesList());
 
                     builder.appendWithOffset(
                             MessageIdUtils.getOffset(entry.getLedgerId(), entry.getEntryId()),
