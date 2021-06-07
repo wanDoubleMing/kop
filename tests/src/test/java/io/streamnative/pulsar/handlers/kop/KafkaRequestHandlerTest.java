@@ -91,6 +91,7 @@ import org.testng.annotations.Test;
 public class KafkaRequestHandlerTest extends KopProtocolHandlerTestBase {
 
     private KafkaRequestHandler handler;
+    private AdminManager adminManager;
 
     @BeforeMethod
     @Override
@@ -136,10 +137,12 @@ public class KafkaRequestHandlerTest extends KopProtocolHandlerTestBase {
         ProtocolHandler handler1 = pulsar.getProtocolHandlers().protocol("kafka");
         GroupCoordinator groupCoordinator = ((KafkaProtocolHandler) handler1).getGroupCoordinator();
 
+        adminManager = new AdminManager(pulsar.getAdminClient());
         handler = new KafkaRequestHandler(
             pulsar,
             (KafkaServiceConfiguration) conf,
             groupCoordinator,
+            adminManager,
             false,
             getPlainEndPoint());
     }
@@ -147,6 +150,7 @@ public class KafkaRequestHandlerTest extends KopProtocolHandlerTestBase {
     @AfterMethod
     @Override
     protected void cleanup() throws Exception {
+        adminManager.shutdown();
         super.internalCleanup();
     }
 
@@ -436,6 +440,15 @@ public class KafkaRequestHandlerTest extends KopProtocolHandlerTestBase {
         final int numMessages = 10;
         final String messagePrefix = "msg-";
 
+        admin.topics().createPartitionedTopic(topic, 1);
+
+        @Cleanup
+        Consumer<byte[]> consumer = pulsarClient.newConsumer()
+                .topic(topic)
+                .subscriptionInitialPosition(SubscriptionInitialPosition.Earliest)
+                .subscriptionName("subscription-name")
+                .subscribe();
+
         final Properties props = new Properties();
         props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, "localhost:" + getKafkaBrokerPort());
         props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, IntegerSerializer.class);
@@ -464,14 +477,8 @@ public class KafkaRequestHandlerTest extends KopProtocolHandlerTestBase {
             //   https://github.com/streamnative/kop/issues/243
         }
 
-        @Cleanup
-        Consumer<byte[]> consumer = pulsarClient.newConsumer()
-                .topic(topic)
-                .subscriptionInitialPosition(SubscriptionInitialPosition.Earliest)
-                .subscriptionName("subscription-name")
-                .subscribe();
         for (int i = 0; i < numMessages; i++) {
-            Message<byte[]> message = consumer.receive(1, TimeUnit.SECONDS);
+            Message<byte[]> message = consumer.receive(5, TimeUnit.SECONDS);
             assertNotNull(message);
             consumer.acknowledge(message);
             assertTrue(indexToOffset.containsKey(i));
@@ -483,7 +490,7 @@ public class KafkaRequestHandlerTest extends KopProtocolHandlerTestBase {
                     positionInSendResponse, positionReceived);
             // The result of MessageIdUtils#getMessageId only contains ledger id and entry id, so we need to cut the
             // extra bytes of positionInSendResponse.
-            assertEquals(positionInSendResponse, Arrays.copyOf(positionReceived, positionInSendResponse.length));
+            assertEquals(Arrays.copyOf(positionInSendResponse, 4), Arrays.copyOf(positionReceived, 4));
         }
     }
 }
