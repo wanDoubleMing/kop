@@ -71,6 +71,7 @@
               <descriptors>
                 <descriptor>src/assemble/bin.xml</descriptor>
               </descriptors>
+              <tarLongFileMode>posix</tarLongFileMode>
             </configuration>
           </execution>
         </executions>
