@@ -161,7 +161,8 @@ public class GroupMetadataManager {
 
     }
 
-    private final byte magicValue = RecordBatch.CURRENT_MAGIC_VALUE;
+//    private final byte magicValue = RecordBatch.CURRENT_MAGIC_VALUE;
+    private final byte magicValue = RecordBatch.MAGIC_VALUE_V1; // 为了适配v1版本
     private final CompressionType compressionType;
     @Getter
     private final OffsetConfig offsetConfig;
